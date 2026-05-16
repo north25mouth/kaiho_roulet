@@ -399,6 +399,22 @@ body.shake { animation: shake 0.45s ease-out; }
 .spin-field-toggle input[type=checkbox] {
   width:16px; height:16px; accent-color:var(--red); cursor:pointer;
 }
+.spin-field select {
+  width:100%; margin-top:4px; padding:8px 10px;
+  border:1px solid var(--border); border-radius:8px;
+  background:var(--surface); color:var(--text);
+  font-family:'Noto Sans JP',sans-serif; font-size:12px;
+  cursor:pointer; outline:none;
+}
+.spin-field select:focus { border-color:var(--border-strong); }
+.sound-preview-btn {
+  width:100%; margin-top:6px; padding:8px 12px;
+  border:1px solid var(--border); border-radius:8px;
+  background:var(--surface-muted); color:var(--muted);
+  font-family:'Noto Sans JP',sans-serif; font-size:11px;
+  cursor:pointer; transition:all 0.12s;
+}
+.sound-preview-btn:hover { border-color:var(--border-strong); color:var(--text); }
 
 .slot-viewport.spinning .reel {
   filter: blur(1.6px);
@@ -654,6 +670,17 @@ body.shake { animation: shake 0.45s ease-out; }
       <div class="spin-field spin-field-toggle">
         <label for="sound-enabled"><span>効果音</span><input type="checkbox" id="sound-enabled" checked></label>
       </div>
+      <div class="spin-field" id="sound-preset-wrap">
+        <label for="sound-preset">音の種類</label>
+        <select id="sound-preset">
+          <option value="slot">スロット（標準）</option>
+          <option value="pachinko">パチンコ</option>
+          <option value="pachinko2">パチンコ・大当たり</option>
+          <option value="retro">レトロ電子</option>
+          <option value="soft">やわらか</option>
+        </select>
+        <button type="button" class="sound-preview-btn" id="sound-preview-btn">試聴する</button>
+      </div>
       <div class="spin-field" id="sound-volume-wrap">
         <label>音量 <code id="sound-vol-disp">70%</code></label>
         <input type="range" id="sound-volume" min="0" max="100" value="70" step="5">
@@ -698,6 +725,131 @@ const Sfx = (function () {
   let ctx = null;
   let master = null;
   let fastTickTimer = null;
+  let previewing = false;
+
+  const PRESETS = {
+    slot: {
+      playDraw(v) {
+        tone(220, 0.06, 'triangle', 0.14 * v);
+        tone(440, 0.04, 'sine', 0.08 * v, 0.02);
+      },
+      playFastTick(v) { noiseTick(v * 0.05, 0.025, 900); },
+      playSlowTick(step, total, v) {
+        const ratio = total > 1 ? step / (total - 1) : 1;
+        tone(280 + ratio * 520, 0.05, 'square', 0.07 * v);
+        noiseTick(v * 0.04, 0.02, 900);
+      },
+      playLand(v) {
+        tone(392, 0.12, 'sine', 0.1 * v);
+        tone(523.25, 0.14, 'sine', 0.11 * v, 0.1);
+        tone(659.25, 0.18, 'sine', 0.12 * v, 0.22);
+        tone(783.99, 0.22, 'triangle', 0.1 * v, 0.36);
+      },
+      playWin(v) {
+        [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.2, 'sine', 0.09 * v, i * 0.11));
+      }
+    },
+    pachinko: {
+      playDraw(v) {
+        pinClack(180, v * 0.16, 0.07);
+        pinClack(420, v * 0.1, 0.04, 0.04);
+      },
+      playFastTick(v) {
+        pinClack(1200 + Math.random() * 900, v * 0.1, 0.016);
+        noiseTick(v * 0.035, 0.012, 2200);
+      },
+      playSlowTick(step, total, v) {
+        const ratio = total > 1 ? step / (total - 1) : 1;
+        pinClack(350 + ratio * 450, v * 0.14, 0.045);
+        pinClack(900 + ratio * 600, v * 0.08, 0.028, 0.02);
+      },
+      playLand(v) {
+        [680, 920, 1180, 1560, 1980].forEach((f, i) => pinClack(f, v * 0.13, 0.04, i * 0.055));
+        noiseBurst(v * 0.07, 0.12);
+      },
+      playWin(v) {
+        [784, 988, 1175, 1319, 1568].forEach((f, i) => {
+          pinClack(f, v * 0.11, 0.06, i * 0.08);
+          tone(f, 0.1, 'square', v * 0.05, i * 0.08);
+        });
+        noiseBurst(v * 0.09, 0.22, 0.42);
+      }
+    },
+    pachinko2: {
+      playDraw(v) {
+        pinClack(120, v * 0.18, 0.09);
+        noiseBurst(v * 0.06, 0.08, 0.05);
+      },
+      playFastTick(v) {
+        pinClack(1600 + Math.random() * 1200, v * 0.12, 0.014);
+        pinClack(800 + Math.random() * 400, v * 0.06, 0.01, 0.008);
+      },
+      playSlowTick(step, total, v) {
+        const ratio = total > 1 ? step / (total - 1) : 1;
+        pinClack(280 + ratio * 320, v * 0.16, 0.05);
+        if (step >= total - 2) pinClack(2400, v * 0.14, 0.035, 0.03);
+      },
+      playLand(v) {
+        [520, 740, 980, 1320, 1760, 2200].forEach((f, i) => pinClack(f, v * 0.15, 0.035, i * 0.045));
+        noiseBurst(v * 0.1, 0.18);
+        tone(1760, 0.25, 'square', v * 0.08, 0.28);
+      },
+      playWin(v) {
+        const fanfare = [523, 659, 784, 988, 1175, 1319, 1568, 1760, 2093];
+        fanfare.forEach((f, i) => {
+          pinClack(f, v * 0.12, 0.055, i * 0.065);
+          tone(f * 0.5, 0.14, 'sawtooth', v * 0.04, i * 0.065);
+        });
+        noiseBurst(v * 0.12, 0.35, 0.55);
+        tone(2093, 0.35, 'square', v * 0.1, 0.62);
+      }
+    },
+    retro: {
+      playDraw(v) {
+        tone(262, 0.05, 'square', 0.12 * v);
+        tone(392, 0.04, 'square', 0.1 * v, 0.05);
+      },
+      playFastTick(v) {
+        tone(600 + Math.random() * 400, 0.02, 'square', 0.08 * v);
+      },
+      playSlowTick(step, total, v) {
+        const ratio = total > 1 ? step / (total - 1) : 1;
+        tone(200 + ratio * 300, 0.04, 'square', 0.09 * v);
+      },
+      playLand(v) {
+        [330, 440, 554, 659].forEach((f, i) => tone(f, 0.08, 'square', 0.1 * v, i * 0.07));
+      },
+      playWin(v) {
+        [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.12, 'square', 0.11 * v, i * 0.1));
+      }
+    },
+    soft: {
+      playDraw(v) {
+        tone(330, 0.08, 'sine', 0.08 * v);
+        tone(440, 0.06, 'sine', 0.06 * v, 0.04);
+      },
+      playFastTick(v) { tone(520 + Math.random() * 80, 0.02, 'sine', 0.04 * v); },
+      playSlowTick(step, total, v) {
+        const ratio = total > 1 ? step / (total - 1) : 1;
+        tone(300 + ratio * 200, 0.06, 'sine', 0.06 * v);
+      },
+      playLand(v) {
+        tone(392, 0.15, 'sine', 0.08 * v);
+        tone(523.25, 0.18, 'sine', 0.09 * v, 0.12);
+      },
+      playWin(v) {
+        [392, 523.25, 659.25].forEach((f, i) => tone(f, 0.22, 'sine', 0.07 * v, i * 0.14));
+      }
+    }
+  };
+
+  function getPresetId() {
+    const el = document.getElementById('sound-preset');
+    const id = el ? el.value : 'slot';
+    return PRESETS[id] ? id : 'slot';
+  }
+
+  function preset() { return PRESETS[getPresetId()]; }
 
   function isEnabled() {
     const el = document.getElementById('sound-enabled');
@@ -736,7 +888,7 @@ const Sfx = (function () {
   }
 
   function tone(freq, duration, type, vol, delay) {
-    if (!ctx || !master) return;
+    if (!ctx || !master || vol <= 0) return;
     const t0 = ctx.currentTime + (delay || 0);
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -750,8 +902,26 @@ const Sfx = (function () {
     osc.stop(t0 + duration + 0.03);
   }
 
-  function noiseTick(vol, duration) {
-    if (!ctx || !master) return;
+  function pinClack(freq, vol, duration, delay) {
+    if (!ctx || !master || vol <= 0) return;
+    const t0 = ctx.currentTime + (delay || 0);
+    const dur = duration || 0.03;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(freq, t0);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(80, freq * 0.35), t0 + dur);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(g);
+    g.connect(master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+    noiseTick(vol * 0.45, dur * 0.7, freq * 1.8, delay);
+  }
+
+  function noiseTick(vol, duration, bandFreq, delay) {
+    if (!ctx || !master || vol <= 0) return;
     const len = Math.max(1, Math.floor(ctx.sampleRate * (duration || 0.03)));
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
     const data = buf.getChannelData(0);
@@ -761,9 +931,9 @@ const Sfx = (function () {
     const g = ctx.createGain();
     src.buffer = buf;
     filt.type = 'bandpass';
-    filt.frequency.value = 900;
-    filt.Q.value = 0.8;
-    const t0 = ctx.currentTime;
+    filt.frequency.value = bandFreq || 900;
+    filt.Q.value = 1.2;
+    const t0 = ctx.currentTime + (delay || 0);
     g.gain.setValueAtTime(vol, t0);
     g.gain.exponentialRampToValueAtTime(0.001, t0 + (duration || 0.03));
     src.connect(filt);
@@ -773,20 +943,47 @@ const Sfx = (function () {
     src.stop(t0 + (duration || 0.03) + 0.01);
   }
 
+  function noiseBurst(vol, duration, delay) {
+    if (!ctx || !master || vol <= 0) return;
+    const len = Math.max(1, Math.floor(ctx.sampleRate * (duration || 0.1)));
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const env = 1 - i / len;
+      data[i] = (Math.random() * 2 - 1) * env * env;
+    }
+    const src = ctx.createBufferSource();
+    const filt = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    src.buffer = buf;
+    filt.type = 'highpass';
+    filt.frequency.value = 600;
+    const t0 = ctx.currentTime + (delay || 0);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + (duration || 0.1));
+    src.connect(filt);
+    filt.connect(g);
+    g.connect(master);
+    src.start(t0);
+    src.stop(t0 + (duration || 0.1) + 0.02);
+  }
+
   return {
     async unlock() { return ready(); },
 
     async playDraw() {
       if (!(await ready())) return;
-      tone(220, 0.06, 'triangle', 0.14 * getVolume());
-      tone(440, 0.04, 'sine', 0.08 * getVolume(), 0.02);
+      preset().playDraw(getVolume());
     },
 
     async startFastTicks(intervalMs) {
       if (!(await ready())) return;
       Sfx.stopFastTicks();
-      const vol = 0.05 * getVolume();
-      fastTickTimer = setInterval(() => noiseTick(vol, 0.025), Math.max(35, intervalMs));
+      const v = getVolume();
+      const ms = Math.max(28, intervalMs);
+      const id = getPresetId();
+      const mult = (id === 'pachinko' || id === 'pachinko2') ? 0.72 : 1;
+      fastTickTimer = setInterval(() => preset().playFastTick(v), Math.round(ms * mult));
     },
 
     stopFastTicks() {
@@ -798,26 +995,36 @@ const Sfx = (function () {
 
     async playSlowTick(step, total) {
       if (!(await ready())) return;
-      const ratio = total > 1 ? step / (total - 1) : 1;
-      const freq = 280 + ratio * 520;
-      tone(freq, 0.05, 'square', 0.07 * getVolume());
-      noiseTick(0.04 * getVolume(), 0.02);
+      preset().playSlowTick(step, total, getVolume());
     },
 
     async playLand() {
       if (!(await ready())) return;
       Sfx.stopFastTicks();
-      const v = getVolume();
-      tone(392, 0.12, 'sine', 0.1 * v);
-      tone(523.25, 0.14, 'sine', 0.11 * v, 0.1);
-      tone(659.25, 0.18, 'sine', 0.12 * v, 0.22);
-      tone(783.99, 0.22, 'triangle', 0.1 * v, 0.36);
+      preset().playLand(getVolume());
     },
 
     async playWin() {
       if (!(await ready())) return;
-      const v = getVolume() * 0.85;
-      [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.2, 'sine', 0.09 * v, i * 0.11));
+      preset().playWin(getVolume() * 0.85);
+    },
+
+    async playPreview() {
+      if (previewing) return;
+      if (!(await ready())) return;
+      previewing = true;
+      const p = preset();
+      const v = getVolume();
+      p.playDraw(v);
+      setTimeout(() => {
+        for (let i = 0; i < 6; i++) setTimeout(() => p.playFastTick(v), i * 45);
+      }, 120);
+      setTimeout(() => { p.playSlowTick(2, 4, v); }, 480);
+      setTimeout(() => { p.playLand(v); }, 620);
+      setTimeout(() => {
+        p.playWin(v);
+        previewing = false;
+      }, 900);
     }
   };
 })();
@@ -844,6 +1051,10 @@ function loadSpinPrefs() {
       const chk = document.getElementById('sound-enabled');
       if (chk) chk.checked = !!o.sndOn;
     }
+    if (o.sndPreset) {
+      const sel = document.getElementById('sound-preset');
+      if (sel && sel.querySelector(`option[value="${o.sndPreset}"]`)) sel.value = o.sndPreset;
+    }
   } catch (_) { /* ignore */ }
 }
 
@@ -855,7 +1066,8 @@ function saveSpinPrefs() {
       slow: parseInt(document.getElementById('spin-slow').value, 10),
       stretch: parseInt(document.getElementById('spin-stretch').value, 10),
       sndOn: document.getElementById('sound-enabled').checked,
-      sndVol: parseInt(document.getElementById('sound-volume').value, 10)
+      sndVol: parseInt(document.getElementById('sound-volume').value, 10),
+      sndPreset: document.getElementById('sound-preset').value
     }));
   } catch (_) { /* ignore */ }
 }
@@ -877,8 +1089,13 @@ function syncSpinDisplays() {
   if (document.getElementById('sound-vol-disp') && sndVol)
     document.getElementById('sound-vol-disp').textContent = sndVol.value + '%';
   const volWrap = document.getElementById('sound-volume-wrap');
+  const presetWrap = document.getElementById('sound-preset-wrap');
+  const previewBtn = document.getElementById('sound-preview-btn');
   const sndOn = document.getElementById('sound-enabled');
-  if (volWrap && sndOn) volWrap.style.opacity = sndOn.checked ? '1' : '0.45';
+  const on = sndOn && sndOn.checked;
+  if (volWrap) volWrap.style.opacity = on ? '1' : '0.45';
+  if (presetWrap) presetWrap.style.opacity = on ? '1' : '0.45';
+  if (previewBtn) previewBtn.disabled = !on;
 }
 
 function getSpinSettings() {
@@ -1250,6 +1467,17 @@ document.getElementById('reset-btn').addEventListener('click',()=>{
 const soundEnabled = document.getElementById('sound-enabled');
 if (soundEnabled) {
   soundEnabled.addEventListener('change',()=>{ syncSpinDisplays(); saveSpinPrefs(); });
+}
+const soundPreset = document.getElementById('sound-preset');
+if (soundPreset) {
+  soundPreset.addEventListener('change',()=>{ saveSpinPrefs(); });
+}
+const soundPreviewBtn = document.getElementById('sound-preview-btn');
+if (soundPreviewBtn) {
+  soundPreviewBtn.addEventListener('click', async ()=>{
+    await Sfx.unlock();
+    Sfx.playPreview();
+  });
 }
 document.body.addEventListener('click', ()=>{ Sfx.unlock(); }, { once: true });
 loadSpinPrefs();
